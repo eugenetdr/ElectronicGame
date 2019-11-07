@@ -1,0 +1,208 @@
+module mojo_top (
+    input clk,              // 50MHz clock
+    input rst_n,            // reset button (active low)
+    output led [8],         // 8 user controllable LEDs
+    input cclk,             // configuration clock, AVR ready when high
+    output spi_miso,        // AVR SPI MISO
+    input spi_ss,           // AVR SPI Slave Select
+    input spi_mosi,         // AVR SPI MOSI
+    input spi_sck,          // AVR SPI Clock
+    output spi_channel [4], // AVR general purpose pins (used by default to select ADC channel)
+    input avr_tx,           // AVR TX (FPGA RX)
+    output avr_rx,          // AVR RX (FPGA TX)
+    input avr_rx_busy,      // AVR RX buffer full
+    input b[6],
+    output power_led[4],
+    output gnd_led[2]
+    
+  ) {
+  
+  const NUMBER_ROWS = 2;
+  const NUMBER_COLUMNS = 4;
+  const NUMBER_LEDS = 8;
+  const COORDINATE_BITS = 3;//number of bits required to represent number of rows + 1 for 2's complement
+  const MINUS_ONE_OVERFLOW = 7; //overflow of bits = max out of number of coordinate bits. (e.g. 3bits = 7, 4 bits = 15)
+
+  sig rst;                  // reset signal
+  
+  .clk(clk) {
+    // The reset conditioner is used to synchronize the reset signal to the FPGA
+    // clock. This ensures the entire FPGA comes out of reset at the same time.
+    reset_conditioner reset_cond;
+    dff led_state[NUMBER_LEDS];
+    dff snake_pos[NUMBER_LEDS];
+    dff food_pos[NUMBER_LEDS];
+    .rst(rst){
+      counter gameclk(#SIZE(1),#DIV(25));
+      counter muxclk(#SIZE(1),#DIV(16));
+      
+      counter rnd_clk(#SIZE(1),#DIV(2));
+      
+      fsm direction_state = {XADD, XSUB, YADD, YSUB, ZADD, ZSUB};      //initialise 2 states fsm, pass state and fail state
+      fsm menu_state = {INITIALIZE, PLAY};
+      counter food_next_pos[NUMBER_LEDS];
+
+    }
+  }
+  
+  .clk(gameclk.value){
+    .rst(rst){
+    }
+    dff x[COORDINATE_BITS];
+    dff y[COORDINATE_BITS];
+    dff z[COORDINATE_BITS];
+    
+    //dff food_x[COORDINATE_BITS];
+    //dff food_y[COORDINATE_BITS];
+    //dff food_z[COORDINATE_BITS];
+    
+    dff score[10];
+  }
+  
+  counter rnd(#SIZE(3), #TOP(7),.clk(rnd_clk.value),.rst(rst));   
+  
+  .clk(muxclk.value)
+  {
+    .rst(rst)
+    {
+      .led_state(led_state.q)
+      {        
+         display dis;
+      }
+    }
+  }
+  
+  
+  always {
+    reset_cond.in = ~rst_n; // input raw inverted reset signal
+    rst = reset_cond.out;   // conditioned reset
+    
+    led = 8h00;             // turn LEDs off
+    spi_miso = bz;          // not using SPI
+    spi_channel = bzzzz;    // not using flags
+    avr_rx = bz;            // not using serial port
+    
+ 
+
+    snake_pos.d = 8b00000001 << (x.q + (NUMBER_ROWS * y.q) + (NUMBER_COLUMNS * z.q));
+    //food_pos.d = 8b00000001 << (food_x.q + (NUMBER_ROWS * food_y.q) + (NUMBER_COLUMNS * food_z.q));
+    led_state.d = snake_pos.q | food_pos.q;
+
+    //LINKS LEDS TO COORDINATES
+    //io_led[0][COORDINATE_BITS-1:0] = 3x{x.q};
+    //io_led[1][COORDINATE_BITS-1:0] = 3x{y.q};
+    //io_led[2][COORDINATE_BITS-1:0] = 3x{z.q};
+    
+    case(menu_state.q)
+    {
+      menu_state.INITIALIZE:
+        food_pos.d = 8b0000010;
+        menu_state.d = menu_state.PLAY;
+       
+      menu_state.PLAY:
+          
+        //Configure controls fsm
+        case (direction_state.q) {
+
+          direction_state.XADD:         
+             if(x.q + 1 == NUMBER_ROWS)
+             {
+                x.d = 0;
+             }
+             else
+             {
+                x.d = x.q + 1;
+             }
+      
+          direction_state.XSUB:
+             if(x.q - 1 == MINUS_ONE_OVERFLOW)
+             {
+                x.d = NUMBER_ROWS-1;
+             }
+             else
+             {
+                x.d = x.q - 1;            
+             }
+      
+          direction_state.YADD:
+             if(y.q + 1 == NUMBER_ROWS)
+             {
+                y.d = 0;
+             }
+             else
+             {
+                y.d = y.q + 1;
+             }
+      
+          direction_state.YSUB:
+             if(y.q - 1 == MINUS_ONE_OVERFLOW)
+             {
+                y.d = NUMBER_ROWS-1;
+             }
+             else
+             {
+                y.d = y.q - 1;            
+             }
+      
+          direction_state.ZADD:
+             if(z.q + 1 == NUMBER_ROWS)
+             {
+                z.d = 0;
+             }
+             else
+             {
+                z.d = z.q + 1;
+             }
+      
+          direction_state.ZSUB:
+             if(z.q - 1 == MINUS_ONE_OVERFLOW)
+             {
+                z.d = NUMBER_ROWS-1;
+             }
+             else
+             {
+                z.d = z.q - 1;            
+             }
+       }
+      
+    }
+    
+    if (b[0]) {
+      direction_state.d = direction_state.XADD;       
+    }
+    
+    if (b[1]) {
+      direction_state.d = direction_state.XSUB;       
+    }
+    
+    if (b[2]) {
+      direction_state.d = direction_state.YADD;       
+    }
+    
+    if (b[3]) {
+      direction_state.d = direction_state.YSUB;       
+    }
+    
+    if (b[4]) {
+      direction_state.d = direction_state.ZADD;       
+    }
+    
+    if (b[5]) {
+      direction_state.d = direction_state.ZSUB;       
+    }
+  
+
+
+   //Configure display out
+   power_led = dis.led_cols;
+   gnd_led = dis.led_rows;
+    
+    //snake eats food
+    if(snake_pos.q == food_pos.q)
+    {
+      score.d = score.q + 1;
+      food_pos.d = 8b00000001 << rnd.value;
+    }
+
+}
+}

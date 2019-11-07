@@ -1,0 +1,41 @@
+module display (
+    input clk,  // clock
+    input rst,  // reset
+    input led_state[8], 
+
+    output led_cols[4], //the output column array that should be powered. 1 = high, 0 = low
+    output led_rows[2] //the output row array that should be grounded. 1 = ground, 0 = float
+  ) {   
+   
+    const NUMBER_ROWS = 2;
+    const NUMBER_COLUMNS = 4;    
+
+    .clk(clk) 
+    {
+        .rst(rst)
+        {
+            dff rows[NUMBER_ROWS];        
+            dff cols[NUMBER_COLUMNS];
+        }
+    }
+
+    always {
+        rows.d = 2b01;
+        led_cols=cols.q;
+        led_rows=rows.q;
+        //shift bit left to each row
+        
+        //read respective cols for state
+        if (rows.q == 2b01)
+        {
+            cols.d = led_state[3:0];
+            rows.d = rows.q << 1;        
+
+        }    
+        else if (rows.q == 2b10 || rows.q == 2b00)
+        {
+            cols.d = led_state[7:4];
+            rows.d = 2b01; //wrap
+        }        
+    }
+}
